@@ -240,9 +240,14 @@ class HumeTadaBackend:
                 audio = audio.T  # (samples, channels) -> (channels, samples)
             audio = audio.to(device)
 
-            # Encode with forced alignment
+            # Encode with forced alignment. Wrap in no_grad: TADA's encoder
+            # (unlike its LM, whose generate() is @torch.no_grad-decorated) does
+            # NOT guard its own forward pass, so without this it retains the full
+            # autograd graph over the reference audio and OOMs on a 12GB GPU
+            # during voice-prompt encoding.
             text_arg = [reference_text] if reference_text else None
-            prompt = self.encoder(audio, text=text_arg, sample_rate=sr)
+            with torch.no_grad():
+                prompt = self.encoder(audio, text=text_arg, sample_rate=sr)
 
             # Serialize EncoderOutput to a dict of CPU tensors for caching
             prompt_dict = {}
