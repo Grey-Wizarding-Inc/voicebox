@@ -13,6 +13,7 @@ and a model config registry that eliminates per-engine dispatch maps.
 from ..utils import hf_offline_patch  # noqa: F401
 
 import threading
+import logging
 from dataclasses import dataclass, field
 from typing import Protocol, Optional, Tuple, List
 from typing_extensions import runtime_checkable
@@ -510,8 +511,36 @@ def engine_has_model_sizes(engine: str) -> bool:
     return len(configs) > 1
 
 
+_logger = logging.getLogger(__name__)
+
+
+def unload_other_tts_backends(keep_engine: str) -> None:
+    """Free VRAM by unloading every loaded TTS backend except ``keep_engine``.
+
+    voicebox caches one backend per engine in ``_tts_backends`` and never
+    evicts across engines, so alternating engines (e.g. tada -> qwen) stacks
+    models in VRAM until the GPU OOMs. Enforce a single-resident policy: only
+    the engine about to generate stays loaded.
+    """
+    for engine, backend in list(_tts_backends.items()):
+        if engine == keep_engine:
+            continue
+        try:
+            if backend.is_loaded():
+                _logger.info(
+                    "Unloading %s backend to free VRAM (switching to %s)",
+                    engine,
+                    keep_engine,
+                )
+                backend.unload_model()
+        except Exception as exc:  # never let cleanup block a generation
+            _logger.warning("Failed to unload %s backend: %s", engine, exc)
+
+
 async def load_engine_model(engine: str, model_size: str = "default") -> None:
     """Load a model for the given engine, handling engines with multiple model sizes."""
+    # Single-resident policy: free other engines' VRAM before loading this one.
+    unload_other_tts_backends(engine)
     backend = get_tts_backend_for_engine(engine)
     if engine in ("qwen", "qwen_custom_voice"):
         await backend.load_model_async(model_size)
