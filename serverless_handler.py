@@ -17,6 +17,7 @@ Output:
 
 import os
 import io
+import time
 import base64
 import tempfile
 
@@ -58,9 +59,20 @@ async def handler(job):
             f.write(base64.b64decode(ref_b64))
             ref_path = f.name
 
+        timings = {}
+        _t = time.monotonic()
         await _backend.load_model(MODEL_SIZE)  # no-op once warm
+        timings["load_total_s"] = round(time.monotonic() - _t, 1)
+        # cold-load split (download_s vs load_s); 0/absent on a warm worker
+        timings.update(getattr(_backend, "last_timings", {}))
+
+        _t = time.monotonic()
         prompt, _ = await _backend.create_voice_prompt(ref_path, ref_text, use_cache=False)
+        timings["encode_s"] = round(time.monotonic() - _t, 1)
+
+        _t = time.monotonic()
         audio, sr = await _backend.generate(text, prompt, language=language, seed=seed)
+        timings["gen_s"] = round(time.monotonic() - _t, 1)
 
         buf = io.BytesIO()
         sf.write(buf, audio, sr, format="WAV", subtype="PCM_16")
@@ -68,6 +80,7 @@ async def handler(job):
             "audio_b64": base64.b64encode(buf.getvalue()).decode(),
             "sample_rate": sr,
             "duration": float(len(audio) / sr),
+            "timings": timings,
         }
     except Exception as exc:  # surface errors as job output, not worker crash
         return {"error": f"{type(exc).__name__}: {exc}"}

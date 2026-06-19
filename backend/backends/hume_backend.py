@@ -16,6 +16,7 @@ causal LM generates speech via flow-matching diffusion.
 import asyncio
 import logging
 import threading
+import time
 from typing import ClassVar, List, Optional, Tuple
 
 import numpy as np
@@ -64,6 +65,7 @@ class HumeTadaBackend:
         self.model_size = "1B"  # default to 1B
         self._device = None
         self._model_load_lock = asyncio.Lock()
+        self.last_timings = {}  # cold-load breakdown: {download_s, load_s}
 
     def _get_device(self) -> str:
         # Force CPU on macOS — MPS has issues with flow matching
@@ -118,6 +120,7 @@ class HumeTadaBackend:
             logger.info(f"Loading HumeAI TADA {model_size} on {device}...")
 
             # Download codec (encoder + decoder) if not cached
+            _t_dl0 = time.monotonic()
             logger.info("Downloading TADA codec...")
             snapshot_download(
                 repo_id=TADA_CODEC_REPO,
@@ -144,6 +147,7 @@ class HumeTadaBackend:
                 token=None,
                 allow_patterns=["tokenizer*", "special_tokens*"],
             )
+            _t_download = time.monotonic() - _t_dl0
 
             # Determine dtype — use bf16 on CUDA/XPU for ~50% memory savings
             if device == "cuda" and torch.cuda.is_bf16_supported():
@@ -165,6 +169,7 @@ class HumeTadaBackend:
             # Load encoder (only needed for voice prompt encoding)
             from tada.modules.encoder import Encoder
 
+            _t_ld0 = time.monotonic()
             logger.info("Loading TADA encoder...")
             self.encoder = Encoder.from_pretrained(TADA_CODEC_REPO, subfolder="encoder").to(device)
             self.encoder.eval()
@@ -181,8 +186,15 @@ class HumeTadaBackend:
             config.tokenizer_name = tokenizer_path
             self.model = TadaForCausalLM.from_pretrained(repo, config=config, torch_dtype=model_dtype).to(device)
             self.model.eval()
+            self.last_timings = {
+                "download_s": round(_t_download, 1),
+                "load_s": round(time.monotonic() - _t_ld0, 1),
+            }
 
-        logger.info(f"HumeAI TADA {model_size} loaded successfully on {device}")
+        logger.info(
+            f"HumeAI TADA {model_size} loaded successfully on {device} "
+            f"(download {self.last_timings['download_s']}s, load {self.last_timings['load_s']}s)"
+        )
 
     def unload_model(self) -> None:
         """Unload model and encoder to free memory."""
