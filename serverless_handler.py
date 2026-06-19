@@ -25,6 +25,8 @@ import tempfile
 # don't re-pull the ~8GB model every wake. Without a volume, falls back to the
 # container default (re-downloads on each cold start) — fine for first load-time
 # measurements; this is the optimization we deliberately defer.
+# Fast parallel HF downloads (also set as ENV in the image; belt-and-suspenders)
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 if os.path.isdir("/runpod-volume"):
     os.environ.setdefault("HF_HOME", "/runpod-volume/huggingface")
 

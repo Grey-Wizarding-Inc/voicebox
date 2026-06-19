@@ -34,11 +34,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=backend-builder /install /usr/local
+# hf_transfer: parallel chunked HF downloads (prebuilt wheel, no build) — small layer
+RUN pip install --no-cache-dir hf_transfer
 COPY backend/ /app/backend/
 COPY serverless_handler.py /app/serverless_handler.py
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
-    TADA_MODEL_SIZE=3B
+    TADA_MODEL_SIZE=3B \
+    HF_HUB_ENABLE_HF_TRANSFER=1
 
 CMD ["python", "-u", "serverless_handler.py"]
