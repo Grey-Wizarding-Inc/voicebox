@@ -1,0 +1,44 @@
+# ============================================================
+# Voicebox — TADA serverless worker (RunPod Serverless)
+# Backend-only (no web frontend). Reuses the solved TADA dep stack
+# + the encoder no_grad fix. Default torch wheel is CUDA on Linux,
+# so it uses the GPU on any RunPod GPU endpoint.
+# ============================================================
+
+# === Stage 1: Python deps (identical resolution to the app image) ===
+FROM python:3.11-slim AS backend-builder
+
+WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git build-essential \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir --upgrade pip
+
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+# chatterbox-tts / hume-tada pin incompatible torch+numpy -> install --no-deps
+RUN pip install --no-cache-dir --prefix=/install --no-deps chatterbox-tts
+RUN pip install --no-cache-dir --prefix=/install --no-deps hume-tada
+RUN pip install --no-cache-dir --prefix=/install \
+    git+https://github.com/QwenLM/Qwen3-TTS.git
+# RunPod serverless SDK
+RUN pip install --no-cache-dir --prefix=/install runpod
+
+
+# === Stage 2: Runtime ===
+FROM python:3.11-slim
+
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=backend-builder /install /usr/local
+COPY backend/ /app/backend/
+COPY serverless_handler.py /app/serverless_handler.py
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    TADA_MODEL_SIZE=3B
+
+CMD ["python", "-u", "serverless_handler.py"]
