@@ -27,7 +27,14 @@ import tempfile
 # measurements; this is the optimization we deliberately defer.
 # Fast parallel HF downloads (also set as ENV in the image; belt-and-suspenders)
 os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
-if os.path.isdir("/runpod-volume"):
+# RunPod "Cached Models": when an endpoint has a cached model, RunPod pre-stages
+# it on the host's LOCAL disk at /runpod-volume/huggingface-cache/hub/ in standard
+# HF cache layout. Pointing HF_HOME there makes snapshot_download a cache HIT
+# (no download, not billed) instead of pulling 8GB over a slow flex-worker link.
+# This is NOT the slow object store — it's host-local and routed to warm hosts.
+if os.path.isdir("/runpod-volume/huggingface-cache"):
+    os.environ.setdefault("HF_HOME", "/runpod-volume/huggingface-cache")
+elif os.path.isdir("/runpod-volume"):
     os.environ.setdefault("HF_HOME", "/runpod-volume/huggingface")
 
 import runpod
